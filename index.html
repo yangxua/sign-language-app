@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>听障沟通原型系统 - 智能语序增强版</title>
+    <title>听障沟通原型系统 - 智能语序增强版 (含语音)</title>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/holistic/holistic.js" crossorigin="anonymous"></script>
@@ -178,7 +178,10 @@
                             <input type="checkbox" id="is-fixed-pos"> 限定位置
                         </label>
                     </div>
-                    <button class="btn btn-primary" id="record-btn">开始录入</button>
+                    <div class="row-buttons" style="margin-bottom: 10px;">
+                        <button class="btn btn-primary" id="record-btn" style="flex:2;">开始录入</button>
+                        <button class="btn btn-outline" id="delete-word-btn" style="flex:1; color:#e74c3c; border-color:#e74c3c;" title="如果你录错了，点击这里删掉重录">🗑️ 删除该词</button>
+                    </div>
                     <div id="record-progress"><div id="record-bar"></div></div>
                 </div>
 
@@ -275,12 +278,68 @@
     let currentConfirmed = "";
     let actionDebounceCount = 0;
 
-    // 【新增】AI 翻译状态锁
+    // AI 翻译状态锁
     let isTranslating = false;
 
     function updateModelStatus() {
         debugText.innerText = classifier.getNumClasses() > 0 ? `模型状态: 已加载 ${classifier.getNumClasses()} 种动作` : "模型状态: 未录入任何手语";
     }
+
+    // ==========================================
+    // 🌟 语音合成 (TTS) 功能
+    // ==========================================
+    function speakText(text) {
+        if (!('speechSynthesis' in window)) return;
+
+        // 过滤掉表情符号，确保声音只读出纯文字
+        const cleanText = text.replace(/[\uD800-\uDBFF][\uDC00-\uDFFF]|\p{Emoji_Presentation}|\p{Extended_Pictographic}/gu, '').replace(/[💬✨⚠️✅🎉🙏👍🍞]/g, '').trim();
+        if (!cleanText) return;
+
+        // 停止上一个还没读完的语音
+        window.speechSynthesis.cancel();
+
+        const utterance = new SpeechSynthesisUtterance(cleanText);
+        utterance.lang = 'zh-CN';
+        utterance.rate = 0.95; // 语速微调
+        utterance.pitch = 1.05; // 音调微调
+
+        // 寻找自然的中文发音人
+        const voices = window.speechSynthesis.getVoices();
+        const zhVoices = voices.filter(v => v.lang.includes('zh'));
+        if (zhVoices.length > 0) {
+            utterance.voice = zhVoices.find(v => v.name.includes('Neural') || v.name.includes('Xiaoxiao') || v.name.includes('Yunxi'))
+                           || zhVoices.find(v => v.name.includes('Ting-Ting') || v.name.includes('Yaoyao'))
+                           || zhVoices[0];
+        }
+
+        const outputEl = document.getElementById('output-text');
+
+        // 开始发音时插入 🔊
+        utterance.onstart = () => {
+            if (outputEl && !outputEl.querySelector('.voice-icon')) {
+                const iconHTML = `<span class="voice-icon" style="display:inline-block; animation: pulse 1s infinite; color: #e67e22; margin-right: 5px;">🔊</span>`;
+                outputEl.innerHTML = iconHTML + outputEl.innerHTML;
+            }
+        };
+
+        // 发音结束或出错时移除 🔊
+        const removeIcon = () => {
+            if (outputEl) {
+                const icon = outputEl.querySelector('.voice-icon');
+                if (icon) icon.remove();
+            }
+        };
+        utterance.onend = removeIcon;
+        utterance.onerror = removeIcon;
+
+        window.speechSynthesis.speak(utterance);
+    }
+
+    // 解决部分浏览器首次无法加载语音列表的问题
+    if ('speechSynthesis' in window) {
+        window.speechSynthesis.onvoiceschanged = () => window.speechSynthesis.getVoices();
+    }
+
 
     // ==========================================
     // 动态组合句库管理
@@ -492,6 +551,50 @@
         } else { stopRecording(); }
     });
 
+    // ==========================================
+    // 🗑️ 单独删除指定词汇功能
+    // ==========================================
+    document.getElementById('delete-word-btn').addEventListener('click', () => {
+        const name = gestureNameInput.value.trim();
+        if (!name) {
+            alert("请先在输入框填写你要删除的动作名称！");
+            return;
+        }
+
+        try {
+            // 获取当前模型里所有的标签
+            const currentDataset = classifier.getClassifierDataset();
+
+            // 检查这个词存不存在
+            if (currentDataset[name]) {
+                classifier.clearClass(name); // 瞬间抹除这个词的动作数据
+
+                // 如果这个词有限定位置（空间锚点），一并删除
+                if (fixedAnchors[name]) {
+                    delete fixedAnchors[name];
+                }
+
+                // 更新右上角的模型数量显示
+                updateModelStatus();
+                outputText.innerText = `✅ 已成功删除: ${name}`;
+                outputText.style.color = "#e74c3c";
+
+                // 3秒后恢复默认提示
+                setTimeout(() => {
+                    if (!isRecording) {
+                        outputText.innerText = "系统就绪，等待输入...";
+                        outputText.style.color = "#2c3e50";
+                    }
+                }, 3000);
+
+            } else {
+                alert(`⚠️ 模型中还没有录入 [${name}] 呢！`);
+            }
+        } catch (e) {
+            console.error("删除异常:", e);
+        }
+    });
+
     function stopRecording() {
         isRecording = false;
         recordBtn.textContent = "开始录入";
@@ -642,7 +745,7 @@
                 } catch(e) {}
                 tensor.dispose();
 
-                // 【核心修改】仅在非翻译状态下接收动作
+                // 仅在非翻译状态下接收动作
                 if (!isTranslating && detectedAction) {
                     if (detectedAction === currentConfirmed) {
                         actionDebounceCount++;
@@ -661,8 +764,8 @@
                 previousFeatures = null;
             }
 
-            // 【核心修改】停顿3秒后，锁定并触发翻译
-            if (!isTranslating && actionSequence.length > 0 && Date.now() - lastActionTime > 5000) {
+            // 停顿3秒后，锁定并触发翻译
+            if (!isTranslating && actionSequence.length > 0 && Date.now() - lastActionTime > 3000) {
                 isTranslating = true; // 🔒 触发锁定！在这期间不再接收新动作
 
                 const sequenceStr = actionSequence.join(",");
@@ -674,8 +777,11 @@
 
                 // 优先检查本地字典库
                 if (gestureDictionary[sequenceStr]) {
-                    outputText.innerText = gestureDictionary[sequenceStr];
+                    const finalTxt = gestureDictionary[sequenceStr];
+                    outputText.innerText = finalTxt;
                     outputText.style.color = "#e74c3c";
+
+                    speakText(finalTxt); // 🌟 播放字典翻译语音
 
                     setTimeout(() => {
                         if (actionSequence.length === 0 && !isTranslating) {
@@ -694,6 +800,8 @@
                         outputText.innerText = "💬 " + translatedText;
                         outputText.style.color = "#27ae60";
 
+                        speakText(translatedText); // 🌟 播放 AI 翻译出的整句话语音
+
                         setTimeout(() => {
                             if (actionSequence.length === 0 && !isTranslating) {
                                 outputText.innerText = "系统就绪，等待输入...";
@@ -709,8 +817,12 @@
                 }
                 // 没开AI时的默认降级显示
                 else {
-                    outputText.innerText = "💬 " + sequenceWords.join("");
+                    const finalTxt = sequenceWords.join("");
+                    outputText.innerText = "💬 " + finalTxt;
                     outputText.style.color = "#e74c3c";
+
+                    speakText(finalTxt); // 🌟 播放普通拼接语音
+
                     setTimeout(() => {
                         if (actionSequence.length === 0 && !isTranslating) {
                             outputText.innerText = "系统就绪，等待输入...";
@@ -842,6 +954,12 @@
         }
     }
 
+// ==========================================
+    // 突破 GitHub 1MB 限制的增强版拉取函数
+    // ==========================================
+// ==========================================
+    // 突破大文件与 CORS 限制的终极拉取函数 (使用 Blob API)
+    // ==========================================
     async function pullFromGitHub() {
         const config = getGHConfig();
         if (!config) { ghStatus.innerText = '请先保存 GitHub 配置'; ghStatus.style.color = '#e74c3c'; return; }
@@ -849,15 +967,38 @@
         ghStatus.innerText = '正在从云端拉取...';
         ghStatus.style.color = '#f39c12';
         try {
+            // 1. 先获取文件的基础信息
             const resp = await fetch(`https://api.github.com/repos/${config.repo}/contents/${MODEL_FILE}`, {
                 headers: { 'Authorization': `token ${config.token}` }
             });
+
             if (resp.ok) {
                 const data = await resp.json();
-                const jsonStr = decodeURIComponent(escape(atob(data.content.replace(/\n/g, ''))));
+                let jsonStr = '';
+
+                // 🌟 终极修复：使用 Git Blob API 完美绕过跨域与大小限制
+                if (data.content && data.encoding === 'base64') {
+                    // 情况A：小文件 (< 1MB)，直接解析
+                    jsonStr = decodeURIComponent(escape(atob(data.content.replace(/\n/g, ''))));
+                } else if (data.git_url) {
+                    // 情况B：大文件 (> 1MB)，走 GitHub 底层的 Blob API 专线
+                    console.log("检测到大文件，正在通过 Git Blob 专线安全拉取...");
+                    const blobResp = await fetch(data.git_url, {
+                        headers: { 'Authorization': `token ${config.token}` }
+                    });
+
+                    if (!blobResp.ok) throw new Error("Blob API 拉取被拒绝");
+
+                    const blobData = await blobResp.json();
+                    jsonStr = decodeURIComponent(escape(atob(blobData.content.replace(/\n/g, ''))));
+                } else {
+                    throw new Error("无法解析的 GitHub 数据格式");
+                }
+
                 loadModelFromJSON(jsonStr);
                 ghStatus.innerText = '✅ 已加载最新模型';
                 ghStatus.style.color = '#27ae60';
+
             } else if (resp.status === 404) {
                 ghStatus.innerText = '云端尚未创建模型';
                 ghStatus.style.color = '#f39c12';
@@ -866,11 +1007,11 @@
                 ghStatus.style.color = '#e74c3c';
             }
         } catch(e) {
+            console.error("模型拉取具体报错:", e);
             ghStatus.innerText = '拉取网络失败';
             ghStatus.style.color = '#e74c3c';
         }
     }
-
     function serializeModel() {
         const ds = classifier.getClassifierDataset();
         const obj = {};
