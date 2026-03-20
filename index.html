@@ -765,7 +765,7 @@
             }
 
             // 停顿3秒后，锁定并触发翻译
-            if (!isTranslating && actionSequence.length > 0 && Date.now() - lastActionTime > 3000) {
+            if (!isTranslating && actionSequence.length > 0 && Date.now() - lastActionTime > 5000) {
                 isTranslating = true; // 🔒 触发锁定！在这期间不再接收新动作
 
                 const sequenceStr = actionSequence.join(",");
