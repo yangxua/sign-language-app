@@ -1,0 +1,1018 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>听障沟通原型系统 - 智能语序增强版</title>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/holistic/holistic.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/knn-classifier"></script>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, sans-serif;
+            background-color: #f0f2f5;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .header {
+            background-color: #2c3e50;
+            color: #fff;
+            padding: 12px 20px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            z-index: 10;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .header h2 { font-size: 18px; margin: 0; font-weight: 600; }
+        .header-status { font-size: 12px; color: #8ACBB7; }
+
+        .main-layout {
+            display: flex;
+            flex: 1;
+            padding: 15px;
+            gap: 15px;
+            overflow: hidden;
+        }
+
+        .left-area {
+            flex: 3;
+            background-color: #000;
+            border-radius: 12px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+            overflow: hidden;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+        }
+        video { display: none; }
+        .left-area canvas {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+            transform: scaleX(-1);
+        }
+
+        .right-area {
+            flex: 1;
+            min-width: 320px;
+            max-width: 400px;
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+
+        .result-panel {
+            background: #fff;
+            border-radius: 12px;
+            padding: 20px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+            text-align: center;
+            flex-shrink: 0;
+            min-height: 130px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+        }
+        #output-text { font-size: 24px; font-weight: bold; color: #2c3e50; transition: color 0.3s; margin-bottom: 5px; }
+        #expression-text { font-size: 16px; color: #8e44ad; }
+        #face-debug {
+            font-size: 11px;
+            color: #95a5a6;
+            margin-top: 10px;
+            font-family: monospace;
+            line-height: 1.4;
+            word-wrap: break-word;
+        }
+
+        .controls-panel {
+            background: #fff;
+            border-radius: 12px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+            overflow-y: auto;
+            flex: 1;
+        }
+
+        .control-section {
+            padding: 20px;
+            border-bottom: 1px solid #eee;
+        }
+        .control-section:last-child { border-bottom: none; }
+
+        .section-title { font-size: 14px; font-weight: bold; color: #34495e; margin-bottom: 12px; display: flex; align-items: center; gap: 6px; }
+        .section-title::before { content: ''; display: block; width: 4px; height: 14px; background: #8ACBB7; border-radius: 2px; }
+
+        .input-group { margin-bottom: 10px; display: flex; gap: 10px; align-items: center; }
+        .input-group input[type="text"], .input-group input[type="password"] {
+            flex: 1; padding: 10px 12px; font-size: 14px;
+            border: 1px solid #ddd; border-radius: 6px;
+            background: #f8f9fa; transition: border 0.2s;
+        }
+        .input-group input[type="text"]:focus, .input-group input[type="password"]:focus { outline: none; border-color: #8ACBB7; background: #fff; }
+
+        .checkbox-label {
+            display: flex; align-items: center; gap: 5px; font-size: 13px;
+            color: #e74c3c; font-weight: bold; cursor: pointer; white-space: nowrap;
+        }
+
+        .btn {
+            width: 100%; padding: 10px; font-size: 14px; font-weight: bold;
+            border: none; border-radius: 6px; cursor: pointer;
+            transition: all 0.2s; display: flex; align-items: center; justify-content: center; gap: 5px;
+        }
+        .btn-primary { background-color: #e74c3c; color: #fff; }
+        .btn-primary:hover { background-color: #c0392b; }
+        .btn-primary.recording { animation: pulse 1s infinite; }
+        .btn-success { background-color: #8ACBB7; color: #000; }
+        .btn-success:hover { background-color: #7ab3a1; }
+        .btn-purple { background-color: #8e44ad; color: #fff; }
+        .btn-purple:hover { background-color: #9b59b6; }
+        .btn-outline { background-color: transparent; border: 1px solid #bdc3c7; color: #7f8c8d; }
+        .btn-outline:hover { background-color: #f1f2f6; color: #2c3e50; }
+
+        .status-text { font-size: 12px; color: #95a5a6; margin-top: 6px; text-align: center; }
+        .row-buttons { display: flex; gap: 10px; margin-top: 10px; }
+        .row-buttons .btn { flex: 1; }
+
+        #record-progress { height: 4px; background: #eee; border-radius: 2px; margin-top: 10px; overflow: hidden; display: none; }
+        #record-bar { height: 100%; width: 0%; background: #e74c3c; transition: width 0.1s; }
+
+        @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.6; } }
+    </style>
+</head>
+<body>
+
+    <div class="header">
+        <h2>听障沟通原型系统</h2>
+        <div class="header-status" id="debug-text">模型状态: 系统初始化中...</div>
+    </div>
+
+    <div class="main-layout">
+        <div class="left-area">
+            <video class="input_video" playsinline webkit-playsinline muted autoplay></video>
+            <canvas class="output_canvas"></canvas>
+        </div>
+
+        <div class="right-area">
+
+            <div class="result-panel">
+                <p id="output-text">正在启动摄像头...</p>
+                <p id="expression-text"></p>
+                <p id="face-debug"></p>
+            </div>
+
+            <div class="controls-panel">
+
+                <div class="control-section">
+                    <div class="section-title">1. 录入原子动作</div>
+                    <div class="input-group">
+                        <input type="text" id="gesture-name" autocomplete="off" placeholder="名称 (如:你好/盐)">
+                        <label class="checkbox-label" title="勾选后，必须在固定位置打才识别">
+                            <input type="checkbox" id="is-fixed-pos"> 限定位置
+                        </label>
+                    </div>
+                    <button class="btn btn-primary" id="record-btn">开始录入</button>
+                    <div id="record-progress"><div id="record-bar"></div></div>
+                </div>
+
+                <div class="control-section">
+                    <div class="section-title">2. 长句拼接规则</div>
+                    <div class="input-group">
+                        <input type="text" id="dict-keys" autocomplete="off" placeholder="序列(如: 没有,面包)">
+                    </div>
+                    <div class="input-group">
+                        <input type="text" id="dict-value" autocomplete="off" placeholder="长句(如: 🍞没面包了)">
+                    </div>
+                    <button class="btn btn-purple" id="add-dict-btn">添加规则</button>
+                    <div class="status-text" id="dict-status">当前自定义规则数: 0</div>
+                </div>
+
+                <div class="control-section">
+                    <div class="section-title">3. GitHub 云同步</div>
+                    <div class="input-group">
+                        <input type="text" id="gh-token" autocomplete="off" placeholder="GitHub Token">
+                    </div>
+                    <div class="input-group">
+                        <input type="text" id="gh-repo" autocomplete="off" placeholder="用户名/仓库名">
+                    </div>
+                    <div class="row-buttons">
+                        <button class="btn btn-outline" id="gh-clear-btn">清除配置</button>
+                        <button class="btn btn-success" id="gh-save-btn" style="color: #fff; background-color: #34495e;">保存</button>
+                    </div>
+                    <div class="status-text" id="gh-status">未配置GitHub</div>
+                </div>
+
+                <div class="control-section">
+                    <div class="section-title">4. 模型管理</div>
+                    <button class="btn btn-success" id="sync-btn" style="margin-bottom: 10px;">上传同步到 GitHub</button>
+                    <button class="btn btn-outline" id="pull-btn" style="margin-bottom: 10px;">从 GitHub 拉取模型</button>
+                    <button class="btn btn-outline" id="clear-btn" style="color: #e74c3c; border-color: #e74c3c;">清空本地模型与句库</button>
+                </div>
+
+                <div class="control-section">
+                    <div class="section-title">5. AI 智能语义润色 (LLM)</div>
+                    <div class="input-group">
+                        <label class="checkbox-label" style="color: #8e44ad; width: 100%;">
+                            <input type="checkbox" id="llm-enable"> 开启 AI 自动整理语序
+                        </label>
+                    </div>
+                    <div class="input-group">
+                        <input type="text" id="llm-url" autocomplete="off" placeholder="https://claudeapi.ccwu.cc/v1/chat/completions">
+                    </div>
+                    <div class="input-group">
+                        <input type="password" id="llm-key" autocomplete="off" placeholder="sk-745fef9a7c28e4534fbb8179747daefb874b2c6c227f08a0a1efcdd0a8ab5a57">
+                    </div>
+                    <div class="input-group">
+                        <input type="text" id="llm-model" autocomplete="off" placeholder="claude-haiku-4-5-20251001">
+                    </div>
+                    <div class="input-group">
+                        <textarea id="llm-prompt" rows="3" style="width:100%; padding:8px; border:1px solid #ddd; border-radius:6px; font-size:12px; font-family:inherit; resize:vertical;" placeholder="System Prompt..."></textarea>
+                    </div>
+                    <div class="row-buttons">
+                        <button class="btn btn-purple" id="llm-save-btn">保存 AI 配置</button>
+                    </div>
+                    <div class="status-text" id="llm-status">AI 润色未配置</div>
+                </div>
+
+            </div>
+        </div>
+    </div>
+
+    <script>
+    // ==========================================
+    // UI 元素绑定与全局状态
+    // ==========================================
+    const videoElement = document.querySelector('.input_video');
+    const canvasElement = document.querySelector('.output_canvas');
+    const canvasCtx = canvasElement.getContext('2d');
+    const outputText = document.getElementById('output-text');
+    const expressionText = document.getElementById('expression-text');
+    const debugText = document.getElementById('debug-text');
+    const recordBtn = document.getElementById('record-btn');
+    const gestureNameInput = document.getElementById('gesture-name');
+    const isFixedCheckbox = document.getElementById('is-fixed-pos');
+    const recordProgress = document.getElementById('record-progress');
+    const recordBar = document.getElementById('record-bar');
+
+    let classifier = knnClassifier.create();
+
+    let fixedAnchors = {};
+    let currentAnchorAccumulator = { lx: 0, ly: 0, rx: 0, ry: 0, countL: 0, countR: 0 };
+
+    let isRecording = false;
+    let recordFramesCount = 0;
+    const MAX_RECORD_FRAMES = 50;
+
+    let actionSequence = [];
+    let lastActionTime = 0;
+    let currentConfirmed = "";
+    let actionDebounceCount = 0;
+
+    // 【新增】AI 翻译状态锁
+    let isTranslating = false;
+
+    function updateModelStatus() {
+        debugText.innerText = classifier.getNumClasses() > 0 ? `模型状态: 已加载 ${classifier.getNumClasses()} 种动作` : "模型状态: 未录入任何手语";
+    }
+
+    // ==========================================
+    // 动态组合句库管理
+    // ==========================================
+    let customDictionary = {};
+    const baseDictionary = { "新,年": "新年", "新,年,快乐": "🎉 新年快乐！", "赞,弯,赞,弯": "🙏 谢谢！", "赞,弯": "🙏 谢谢！", "赞": "👍 太棒了！" };
+    let gestureDictionary = { ...baseDictionary };
+    const dictStatus = document.getElementById('dict-status');
+
+    function updateDictUI() {
+        if(dictStatus) dictStatus.innerText = `当前自定义规则数: ${Object.keys(customDictionary).length}`;
+    }
+
+    function loadLocalDict() {
+        try {
+            const savedDict = localStorage.getItem('custom_dict');
+            if (savedDict) {
+                customDictionary = JSON.parse(savedDict);
+                gestureDictionary = { ...baseDictionary, ...customDictionary };
+            }
+        } catch(e) {}
+        updateDictUI();
+    }
+    loadLocalDict();
+
+    document.getElementById('add-dict-btn').addEventListener('click', () => {
+        const keys = document.getElementById('dict-keys').value.trim().replace(/，/g, ',');
+        const val = document.getElementById('dict-value').value.trim();
+        if (!keys || !val) { alert('请填写动作序列和显示长句！'); return; }
+        customDictionary[keys] = val;
+        gestureDictionary = { ...baseDictionary, ...customDictionary };
+        localStorage.setItem('custom_dict', JSON.stringify(customDictionary));
+        updateDictUI();
+        document.getElementById('dict-keys').value = '';
+        document.getElementById('dict-value').value = '';
+        alert('✅ 规则添加成功！');
+        if (getGHConfig()) { uploadToGitHub(); }
+    });
+
+    // ==========================================
+    // 面部表情识别系统
+    // ==========================================
+    const FACE = {
+        mouthLeft: 61, mouthRight: 291, lipTop: 13, lipBottom: 14,
+        leftEyeTop: 159, leftEyeBottom: 145, leftEyeOuter: 33, leftEyeInner: 133,
+        rightEyeTop: 386, rightEyeBottom: 374, rightEyeInner: 362, rightEyeOuter: 263,
+        leftBrowInner: 55, rightBrowInner: 285, leftBrowPeak: 105, rightBrowPeak: 334
+    };
+
+    function dist(a, b) { return Math.sqrt((a.x - b.x) ** 2 + (a.y - b.y) ** 2); }
+    function calcMAR(fl) { return dist(fl[FACE.lipTop], fl[FACE.lipBottom]) / (dist(fl[FACE.mouthLeft], fl[FACE.mouthRight]) || 0.001); }
+    function calcLeftEAR(fl) { return dist(fl[FACE.leftEyeTop], fl[FACE.leftEyeBottom]) / (dist(fl[FACE.leftEyeOuter], fl[FACE.leftEyeInner]) || 0.001); }
+    function calcRightEAR(fl) { return dist(fl[FACE.rightEyeTop], fl[FACE.rightEyeBottom]) / (dist(fl[FACE.rightEyeInner], fl[FACE.rightEyeOuter]) || 0.001); }
+    function calcMouthWidth(fl) { return dist(fl[FACE.mouthLeft], fl[FACE.mouthRight]); }
+    function calcSmileValue(fl) { const avgCornerY = (fl[FACE.mouthLeft].y + fl[FACE.mouthRight].y) / 2; return fl[FACE.lipTop].y - avgCornerY; }
+    function calcBrowEyeDist(fl, browIdx, eyeTopIdx, eyeBottomIdx) { const eyeCenterY = (fl[eyeTopIdx].y + fl[eyeBottomIdx].y) / 2; return eyeCenterY - fl[browIdx].y; }
+    function calcBrowInnerDist(fl) { return dist(fl[FACE.leftBrowInner], fl[FACE.rightBrowInner]); }
+    function calcMouthAsymmetry(fl) { const leftY = fl[FACE.mouthLeft].y; const rightY = fl[FACE.mouthRight].y; const width = dist(fl[FACE.mouthLeft], fl[FACE.mouthRight]); return width > 0 ? Math.abs(leftY - rightY) / width : 0; }
+    function calcBrowAsymmetry(fl) { const leftH = calcBrowEyeDist(fl, FACE.leftBrowPeak, FACE.leftEyeTop, FACE.leftEyeBottom); const rightH = calcBrowEyeDist(fl, FACE.rightBrowPeak, FACE.rightEyeTop, FACE.rightEyeBottom); const avg = (leftH + rightH) / 2; return avg > 0 ? Math.abs(leftH - rightH) / avg : 0; }
+
+    let baseline = { mouthWidth: 0, browInnerDist: 0, browEyeDistL: 0, browEyeDistR: 0, smileValue: 0, calibrated: false, samples: [] };
+    const CALIBRATION_FRAMES = 10;
+
+    function updateBaseline(fl) {
+        if (baseline.calibrated) return;
+        baseline.samples.push({
+            mouthWidth: calcMouthWidth(fl), browInnerDist: calcBrowInnerDist(fl),
+            browEyeDistL: calcBrowEyeDist(fl, FACE.leftBrowPeak, FACE.leftEyeTop, FACE.leftEyeBottom),
+            browEyeDistR: calcBrowEyeDist(fl, FACE.rightBrowPeak, FACE.rightEyeTop, FACE.rightEyeBottom),
+            smileValue: calcSmileValue(fl)
+        });
+        if (baseline.samples.length >= CALIBRATION_FRAMES) {
+            const avg = (arr, key) => arr.reduce((s, v) => s + v[key], 0) / arr.length;
+            baseline.mouthWidth = avg(baseline.samples, 'mouthWidth'); baseline.browInnerDist = avg(baseline.samples, 'browInnerDist');
+            baseline.browEyeDistL = avg(baseline.samples, 'browEyeDistL'); baseline.browEyeDistR = avg(baseline.samples, 'browEyeDistR');
+            baseline.smileValue = avg(baseline.samples, 'smileValue'); baseline.calibrated = true; baseline.samples = [];
+        }
+    }
+
+    let neutralFrameCount = 0;
+    const NEUTRAL_DEBOUNCE = 5;
+    let lastExpression = '校准中...';
+
+    function classifyExpression(fl) {
+        const mar = calcMAR(fl);
+        const avgEAR = (calcLeftEAR(fl) + calcRightEAR(fl)) / 2;
+        updateBaseline(fl);
+        if (!baseline.calibrated) return '校准中... (' + baseline.samples.length + '/' + CALIBRATION_FRAMES + ')';
+
+        const browInnerRatio = calcBrowInnerDist(fl) / baseline.browInnerDist;
+        const browAsym = calcBrowAsymmetry(fl);
+        const browEyeDistL = calcBrowEyeDist(fl, FACE.leftBrowPeak, FACE.leftEyeTop, FACE.leftEyeBottom);
+        const browEyeDistR = calcBrowEyeDist(fl, FACE.rightBrowPeak, FACE.rightEyeTop, FACE.rightEyeBottom);
+        const avgBrowEyeRatio = ((browEyeDistL / baseline.browEyeDistL) + (browEyeDistR / baseline.browEyeDistR)) / 2;
+        const smileDelta = calcSmileValue(fl) - baseline.smileValue;
+
+        let detected = null;
+        const mouthAsym = calcMouthAsymmetry(fl);
+        const faceDebug = document.getElementById('face-debug');
+        if (faceDebug) { faceDebug.innerText = `EAR:${avgEAR.toFixed(3)} MAR:${mar.toFixed(3)} smile:${smileDelta.toFixed(4)} browAsym:${browAsym.toFixed(3)} browRatio:${browInnerRatio.toFixed(3)} browEye:${avgBrowEyeRatio.toFixed(3)} mouthAsym:${mouthAsym.toFixed(3)}`; }
+
+        if (avgBrowEyeRatio > 1.20 || mar > 0.35) detected = '惊讶';
+        if (!detected && mouthAsym > 0.08 && smileDelta < 0.005) detected = '生气';
+        if (!detected && smileDelta < 0.002 && avgBrowEyeRatio < 0.86) detected = '困惑';
+        if (!detected && smileDelta > 0.006) detected = '高兴';
+
+        if (!detected) {
+            const isCalm = Math.abs(smileDelta) < 0.020 && avgEAR >= 0.30 && avgEAR <= 0.75 && mar < 0.15 && avgBrowEyeRatio <= 1.20;
+            if (isCalm) {
+                neutralFrameCount++;
+                if (neutralFrameCount >= NEUTRAL_DEBOUNCE) { detected = '平静'; }
+                else { detected = lastExpression !== '校准中...' ? lastExpression : '平静'; }
+            } else { neutralFrameCount = 0; }
+        } else { neutralFrameCount = 0; }
+
+        if (!detected) detected = lastExpression !== '校准中...' ? lastExpression : '平静';
+        lastExpression = detected; return detected;
+    }
+
+    function getExpressionDisplay(expr) {
+        const map = {
+            '高兴': { emoji: '😊', color: '#27ae60', meaning: '积极/肯定' }, '惊讶': { emoji: '😲', color: '#e67e22', meaning: '感叹/强调' },
+            '困惑': { emoji: '🤔', color: '#3498db', meaning: '疑问/请重复' }, '生气': { emoji: '😠', color: '#e74c3c', meaning: '不满/愤怒' },
+            '平静': { emoji: '😐', color: '#95a5a6', meaning: '默认状态' }, '校准中...': { emoji: '⏳', color: '#f39c12', meaning: '请保持自然表情' }
+        };
+        return map[expr] || { emoji: '', color: '#95a5a6', meaning: '' };
+    }
+
+    // ==========================================
+    // 特征提取
+    // ==========================================
+    let previousFeatures = null;
+    const EMA_ALPHA = 0.5;
+    let wristHistory = [];
+    const HISTORY_LEN = 5;
+
+    function smoothFeatures(newFeatures) {
+        if (!previousFeatures || previousFeatures.length !== newFeatures.length) { previousFeatures = [...newFeatures]; return newFeatures; }
+        for (let i = 0; i < newFeatures.length; i++) {
+            if (newFeatures[i] === 0 || previousFeatures[i] === 0) { previousFeatures[i] = newFeatures[i]; }
+            else { previousFeatures[i] = EMA_ALPHA * newFeatures[i] + (1 - EMA_ALPHA) * previousFeatures[i]; }
+        }
+        return [...previousFeatures];
+    }
+
+    function extractHandFeatures(landmarks) {
+        if (!landmarks) return new Array(63).fill(0);
+        const wrist = landmarks[0];
+        let scale = dist(wrist, landmarks[9]);
+        if (scale < 0.05) scale = 0.05;
+        const features = [];
+        for (let i = 0; i < 21; i++) {
+            let weight = 1.0;
+            if (i >= 1 && i <= 4) weight = 3.0;
+            if (i >= 5 && i <= 8) weight = 2.0;
+            features.push(((landmarks[i].x - wrist.x) / scale) * weight);
+            features.push(((landmarks[i].y - wrist.y) / scale) * weight);
+            features.push(((landmarks[i].z - wrist.z) / scale) * weight);
+        }
+        return features;
+    }
+
+    function extractBaseFeatures(results) {
+        const leftHandFeatures = extractHandFeatures(results.leftHandLandmarks);
+        const rightHandFeatures = extractHandFeatures(results.rightHandLandmarks);
+
+        let moveFeatures = [0, 0, 0, 0, 0, 0];
+        let nose = results.poseLandmarks ? results.poseLandmarks[0] : {x:0.5, y:0.5, z:0};
+
+        let currentWrists = {
+            lx: results.leftHandLandmarks ? results.leftHandLandmarks[0].x : nose.x,
+            ly: results.leftHandLandmarks ? results.leftHandLandmarks[0].y : nose.y,
+            lz: results.leftHandLandmarks ? results.leftHandLandmarks[0].z : nose.z,
+            rx: results.rightHandLandmarks ? results.rightHandLandmarks[0].x : nose.x,
+            ry: results.rightHandLandmarks ? results.rightHandLandmarks[0].y : nose.y,
+            rz: results.rightHandLandmarks ? results.rightHandLandmarks[0].z : nose.z,
+        };
+
+        wristHistory.push(currentWrists);
+        if (wristHistory.length > HISTORY_LEN) { wristHistory.shift(); }
+
+        if (wristHistory.length === HISTORY_LEN) {
+            let past = wristHistory[0];
+            moveFeatures = [
+                (currentWrists.lx - past.lx) * 10, (currentWrists.ly - past.ly) * 10, (currentWrists.lz - past.lz) * 10,
+                (currentWrists.rx - past.rx) * 10, (currentWrists.ry - past.ry) * 10, (currentWrists.rz - past.rz) * 10
+            ];
+        }
+
+        return [...leftHandFeatures, ...rightHandFeatures, ...moveFeatures];
+    }
+
+    // ==========================================
+    // 录入控制
+    // ==========================================
+    recordBtn.addEventListener('click', () => {
+        if (!isRecording) {
+            const name = gestureNameInput.value.trim();
+            if (!name) { alert("请先输入动作名称！"); return; }
+            isRecording = true;
+            recordFramesCount = 0;
+            wristHistory = [];
+            currentAnchorAccumulator = { lx: 0, ly: 0, rx: 0, ry: 0, countL: 0, countR: 0 };
+
+            recordBtn.textContent = "录入中...请保持动作";
+            recordBtn.classList.add('recording');
+            recordProgress.style.display = 'block';
+            recordBar.style.width = '0%';
+        } else { stopRecording(); }
+    });
+
+    function stopRecording() {
+        isRecording = false;
+        recordBtn.textContent = "开始录入";
+        recordBtn.classList.remove('recording');
+        recordProgress.style.display = 'none';
+        recordBar.style.width = '0%';
+
+        const gestureName = gestureNameInput.value.trim();
+
+        if (isFixedCheckbox.checked) {
+            fixedAnchors[gestureName] = {
+                lx: currentAnchorAccumulator.countL > 10 ? currentAnchorAccumulator.lx / currentAnchorAccumulator.countL : null,
+                ly: currentAnchorAccumulator.countL > 10 ? currentAnchorAccumulator.ly / currentAnchorAccumulator.countL : null,
+                rx: currentAnchorAccumulator.countR > 10 ? currentAnchorAccumulator.rx / currentAnchorAccumulator.countR : null,
+                ry: currentAnchorAccumulator.countR > 10 ? currentAnchorAccumulator.ry / currentAnchorAccumulator.countR : null,
+            };
+        } else {
+            delete fixedAnchors[gestureName];
+        }
+
+        const modeText = isFixedCheckbox.checked ? "限定固定位置" : "自由任意位置";
+        outputText.innerText = `已录入动作: ${gestureName} (${modeText})`;
+        updateModelStatus();
+
+        if (getGHConfig()) { uploadToGitHub(); }
+    }
+
+    // ==========================================
+    // Holistic 识别引擎
+    // ==========================================
+    async function onResults(results) {
+
+        if (results.leftHandLandmarks && results.rightHandLandmarks) {
+            const wDist = dist(results.leftHandLandmarks[0], results.rightHandLandmarks[0]);
+            const iDist = dist(results.leftHandLandmarks[8], results.rightHandLandmarks[8]);
+            if (wDist < 0.08 && iDist < 0.08) { results.rightHandLandmarks = null; }
+        }
+
+        if (canvasElement.width !== results.image.width || canvasElement.height !== results.image.height) {
+            canvasElement.width = results.image.width; canvasElement.height = results.image.height;
+        }
+
+        canvasCtx.save();
+        canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+        canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+
+        if (results.poseLandmarks) {
+            drawConnectors(canvasCtx, results.poseLandmarks, POSE_CONNECTIONS, {color: '#ecf0f150', lineWidth: 1});
+        }
+        if (results.faceLandmarks) drawConnectors(canvasCtx, results.faceLandmarks, FACEMESH_TESSELATION, {color: '#C0C0C040', lineWidth: 1});
+        if (results.leftHandLandmarks) {
+            drawConnectors(canvasCtx, results.leftHandLandmarks, HAND_CONNECTIONS, {color: '#00FF00', lineWidth: 3});
+            drawLandmarks(canvasCtx, results.leftHandLandmarks, {color: '#FF0000', lineWidth: 1, radius: 2});
+        }
+        if (results.rightHandLandmarks) {
+            drawConnectors(canvasCtx, results.rightHandLandmarks, HAND_CONNECTIONS, {color: '#8ACBB7', lineWidth: 3});
+            drawLandmarks(canvasCtx, results.rightHandLandmarks, {color: '#FF6600', lineWidth: 1, radius: 2});
+        }
+        canvasCtx.restore();
+
+        if (results.faceLandmarks) {
+            const fl = results.faceLandmarks;
+            const expr = classifyExpression(fl);
+            const displayExpr = expr.includes('校准中') ? '校准中...' : expr;
+            const display = getExpressionDisplay(displayExpr);
+
+            if (display.emoji) {
+                expressionText.innerHTML = `表情识别: ${display.emoji} <b>${expr}</b> <span style="font-size:14px;color:#7f8c8d;">(${display.meaning})</span>`;
+                expressionText.style.color = display.color;
+            } else {
+                expressionText.innerText = `表情识别: ${expr}`;
+                expressionText.style.color = '#95a5a6';
+            }
+        } else { expressionText.innerText = '未检测到面部'; expressionText.style.color = '#95a5a6'; }
+
+        const hasHand = results.leftHandLandmarks || results.rightHandLandmarks;
+
+        if (isRecording) {
+            if (hasHand) {
+                const smoothed132 = smoothFeatures(extractBaseFeatures(results));
+                classifier.addExample(tf.tensor1d(smoothed132), gestureNameInput.value.trim());
+
+                if (isFixedCheckbox.checked && results.poseLandmarks) {
+                    const nose = results.poseLandmarks[0];
+                    if (results.leftHandLandmarks) {
+                        currentAnchorAccumulator.lx += results.leftHandLandmarks[0].x - nose.x;
+                        currentAnchorAccumulator.ly += results.leftHandLandmarks[0].y - nose.y;
+                        currentAnchorAccumulator.countL++;
+                    }
+                    if (results.rightHandLandmarks) {
+                        currentAnchorAccumulator.rx += results.rightHandLandmarks[0].x - nose.x;
+                        currentAnchorAccumulator.ry += results.rightHandLandmarks[0].y - nose.y;
+                        currentAnchorAccumulator.countR++;
+                    }
+                }
+
+                recordFramesCount++;
+                const progress = Math.min(recordFramesCount / MAX_RECORD_FRAMES * 100, 100);
+                recordBar.style.width = progress + '%';
+                outputText.innerText = `正在抓取动作特征: ${gestureNameInput.value.trim()} (${recordFramesCount}/${MAX_RECORD_FRAMES})`;
+
+                if (recordFramesCount >= MAX_RECORD_FRAMES) stopRecording();
+            } else { outputText.innerText = "录入暂停：请将手离开身体一点点"; }
+        }
+        else if (classifier.getNumClasses() > 0) {
+            let detectedAction = null;
+            if (hasHand) {
+                const smoothed132 = smoothFeatures(extractBaseFeatures(results));
+                const tensor = tf.tensor1d(smoothed132);
+
+                try {
+                    const res = await classifier.predictClass(tensor, 5);
+                    if (res.confidences[res.label] >= 0.8) {
+                        detectedAction = res.label;
+
+                        if (fixedAnchors[detectedAction] && results.poseLandmarks) {
+                            const anchor = fixedAnchors[detectedAction];
+                            const nose = results.poseLandmarks[0];
+                            let isPositionValid = true;
+                            const DISTANCE_TOLERANCE = 0.25;
+
+                            if (anchor.rx !== null) {
+                                if (!results.rightHandLandmarks) isPositionValid = false;
+                                else {
+                                    const currentRx = results.rightHandLandmarks[0].x - nose.x;
+                                    const currentRy = results.rightHandLandmarks[0].y - nose.y;
+                                    if (dist({x: currentRx, y: currentRy}, {x: anchor.rx, y: anchor.ry}) > DISTANCE_TOLERANCE) {
+                                        isPositionValid = false;
+                                    }
+                                }
+                            }
+                            if (anchor.lx !== null && isPositionValid) {
+                                if (!results.leftHandLandmarks) isPositionValid = false;
+                                else {
+                                    const currentLx = results.leftHandLandmarks[0].x - nose.x;
+                                    const currentLy = results.leftHandLandmarks[0].y - nose.y;
+                                    if (dist({x: currentLx, y: currentLy}, {x: anchor.lx, y: anchor.ly}) > DISTANCE_TOLERANCE) {
+                                        isPositionValid = false;
+                                    }
+                                }
+                            }
+
+                            if (!isPositionValid) {
+                                detectedAction = null;
+                            }
+                        }
+                    }
+                } catch(e) {}
+                tensor.dispose();
+
+                // 【核心修改】仅在非翻译状态下接收动作
+                if (!isTranslating && detectedAction) {
+                    if (detectedAction === currentConfirmed) {
+                        actionDebounceCount++;
+                    } else {
+                        currentConfirmed = detectedAction;
+                        actionDebounceCount = 1;
+                    }
+                    if (actionDebounceCount === 5) {
+                        if (actionSequence[actionSequence.length - 1] !== detectedAction) {
+                            actionSequence.push(detectedAction);
+                            lastActionTime = Date.now(); // 每次打入手语都刷新3秒倒计时
+                        }
+                    }
+                }
+            } else {
+                previousFeatures = null;
+            }
+
+            // 【核心修改】停顿3秒后，锁定并触发翻译
+            if (!isTranslating && actionSequence.length > 0 && Date.now() - lastActionTime > 3000) {
+                isTranslating = true; // 🔒 触发锁定！在这期间不再接收新动作
+
+                const sequenceStr = actionSequence.join(",");
+                const sequenceWords = [...actionSequence];
+                actionSequence = [];
+                currentConfirmed = "";
+
+                const isAIEnabled = document.getElementById('llm-enable').checked;
+
+                // 优先检查本地字典库
+                if (gestureDictionary[sequenceStr]) {
+                    outputText.innerText = gestureDictionary[sequenceStr];
+                    outputText.style.color = "#e74c3c";
+
+                    setTimeout(() => {
+                        if (actionSequence.length === 0 && !isTranslating) {
+                            outputText.innerText = "系统就绪，等待输入...";
+                            outputText.style.color = "#2c3e50";
+                        }
+                    }, 5000);
+                    isTranslating = false; // 🔓 解锁
+                }
+                // 调用大语言模型
+                else if (isAIEnabled && sequenceWords.length > 1) {
+                    outputText.innerText = `✨ AI 思考中: [${sequenceWords.join(" ")}]`;
+                    outputText.style.color = "#8e44ad";
+
+                    translateSequenceWithLLM(sequenceWords).then(translatedText => {
+                        outputText.innerText = "💬 " + translatedText;
+                        outputText.style.color = "#27ae60";
+
+                        setTimeout(() => {
+                            if (actionSequence.length === 0 && !isTranslating) {
+                                outputText.innerText = "系统就绪，等待输入...";
+                                outputText.style.color = "#2c3e50";
+                            }
+                        }, 8000);
+                    }).catch(err => {
+                        outputText.innerText = "⚠️ AI 翻译异常";
+                    }).finally(() => {
+                        isTranslating = false; // 🔓 无论成功失败，都必须解锁
+                        lastActionTime = Date.now(); // 防止立刻误触
+                    });
+                }
+                // 没开AI时的默认降级显示
+                else {
+                    outputText.innerText = "💬 " + sequenceWords.join("");
+                    outputText.style.color = "#e74c3c";
+                    setTimeout(() => {
+                        if (actionSequence.length === 0 && !isTranslating) {
+                            outputText.innerText = "系统就绪，等待输入...";
+                            outputText.style.color = "#2c3e50";
+                        }
+                    }, 5000);
+                    isTranslating = false; // 🔓 解锁
+                }
+            }
+
+            // 实时展示用户正在打的零散词汇 (翻译时不闪烁)
+            if (!isTranslating) {
+                if (actionSequence.length > 0) {
+                    outputText.innerText = actionSequence.join(" ➜ ");
+                    outputText.style.color = "#8ACBB7";
+                } else if (!isRecording && !hasHand && outputText.innerText.includes("➜")) {
+                    outputText.innerText = "系统就绪，等待输入...";
+                    outputText.style.color = "#2c3e50";
+                }
+            }
+        }
+    }
+
+    const holistic = new Holistic({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/holistic/${file}`});
+    holistic.setOptions({
+        modelComplexity: 1,
+        smoothLandmarks: true,
+        minDetectionConfidence: 0.35,
+        minTrackingConfidence: 0.35,
+        refineFaceLandmarks: true
+    });
+    holistic.onResults(onResults);
+
+    const camera = new Camera(videoElement, {
+        onFrame: async () => { await holistic.send({image: videoElement}); },
+        width: 1280, height: 720, facingMode: 'user'
+    });
+    camera.start()
+        .then(() => {
+            outputText.innerText = "系统就绪，等待输入...";
+            updateModelStatus();
+        })
+        .catch((err) => { outputText.innerText = "摄像头启动失败"; });
+
+    // ==========================================
+    // GitHub 云同步配置与逻辑
+    // ==========================================
+    const ghTokenInput = document.getElementById('gh-token');
+    const ghRepoInput = document.getElementById('gh-repo');
+    const ghStatus = document.getElementById('gh-status');
+    const MODEL_FILE = 'sign-language-model.json';
+
+    function loadGHConfig() {
+        const token = localStorage.getItem('gh_token');
+        const repo = localStorage.getItem('gh_repo');
+        if (token) ghTokenInput.value = token;
+        if (repo) ghRepoInput.value = repo;
+        if (token && repo) ghStatus.innerText = '已加载本地配置';
+    }
+    loadGHConfig();
+
+    document.getElementById('gh-save-btn').addEventListener('click', () => {
+        const token = ghTokenInput.value.trim();
+        const repo = ghRepoInput.value.trim();
+        if (!token || !repo) { alert('请填写完整配置！'); return; }
+        localStorage.setItem('gh_token', token);
+        localStorage.setItem('gh_repo', repo);
+        ghStatus.innerText = '配置已保存';
+        ghStatus.style.color = '#27ae60';
+    });
+
+    document.getElementById('gh-clear-btn').addEventListener('click', () => {
+        localStorage.removeItem('gh_token');
+        localStorage.removeItem('gh_repo');
+        ghTokenInput.value = '';
+        ghRepoInput.value = '';
+        ghStatus.innerText = '配置已清除';
+        ghStatus.style.color = '#e74c3c';
+    });
+
+    function getGHConfig() {
+        const token = localStorage.getItem('gh_token');
+        const repo = localStorage.getItem('gh_repo');
+        if (!token || !repo) return null;
+        return { token, repo };
+    }
+
+    async function getFileSHA(config) {
+        try {
+            const resp = await fetch(`https://api.github.com/repos/${config.repo}/contents/${MODEL_FILE}`, {
+                headers: { 'Authorization': `token ${config.token}` }
+            });
+            if (resp.ok) {
+                const data = await resp.json();
+                return data.sha;
+            }
+        } catch(e) {}
+        return null;
+    }
+
+    async function uploadToGitHub() {
+        const config = getGHConfig();
+        if (!config) { ghStatus.innerText = '请先保存 GitHub 配置'; ghStatus.style.color = '#e74c3c'; return; }
+        if (classifier.getNumClasses() === 0) return;
+
+        ghStatus.innerText = '正在同步到云端...';
+        ghStatus.style.color = '#f39c12';
+        try {
+            const content = btoa(unescape(encodeURIComponent(serializeModel())));
+            const sha = await getFileSHA(config);
+            const body = { message: '更新空间锚点模型及句库', content: content };
+            if (sha) body.sha = sha;
+
+            const resp = await fetch(`https://api.github.com/repos/${config.repo}/contents/${MODEL_FILE}`, {
+                method: 'PUT',
+                headers: { 'Authorization': `token ${config.token}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify(body)
+            });
+            if (resp.ok) {
+                ghStatus.innerText = '✅ 云端同步成功';
+                ghStatus.style.color = '#27ae60';
+            } else {
+                ghStatus.innerText = '同步失败 (验证Token/Repo)';
+                ghStatus.style.color = '#e74c3c';
+            }
+        } catch(e) {
+            ghStatus.innerText = '网络请求失败';
+            ghStatus.style.color = '#e74c3c';
+        }
+    }
+
+    async function pullFromGitHub() {
+        const config = getGHConfig();
+        if (!config) { ghStatus.innerText = '请先保存 GitHub 配置'; ghStatus.style.color = '#e74c3c'; return; }
+
+        ghStatus.innerText = '正在从云端拉取...';
+        ghStatus.style.color = '#f39c12';
+        try {
+            const resp = await fetch(`https://api.github.com/repos/${config.repo}/contents/${MODEL_FILE}`, {
+                headers: { 'Authorization': `token ${config.token}` }
+            });
+            if (resp.ok) {
+                const data = await resp.json();
+                const jsonStr = decodeURIComponent(escape(atob(data.content.replace(/\n/g, ''))));
+                loadModelFromJSON(jsonStr);
+                ghStatus.innerText = '✅ 已加载最新模型';
+                ghStatus.style.color = '#27ae60';
+            } else if (resp.status === 404) {
+                ghStatus.innerText = '云端尚未创建模型';
+                ghStatus.style.color = '#f39c12';
+            } else {
+                ghStatus.innerText = '拉取失败 (验证Token/Repo)';
+                ghStatus.style.color = '#e74c3c';
+            }
+        } catch(e) {
+            ghStatus.innerText = '拉取网络失败';
+            ghStatus.style.color = '#e74c3c';
+        }
+    }
+
+    function serializeModel() {
+        const ds = classifier.getClassifierDataset();
+        const obj = {};
+        Object.keys(ds).forEach(key => { obj[key] = ds[key].arraySync(); });
+
+        const exportData = {
+            baseData: obj,
+            anchors: fixedAnchors,
+            customDict: customDictionary
+        };
+        return JSON.stringify(exportData);
+    }
+
+    function loadModelFromJSON(jsonStr) {
+        const parsed = JSON.parse(jsonStr);
+
+        if (parsed.customDict) {
+            customDictionary = parsed.customDict;
+            gestureDictionary = { ...baseDictionary, ...customDictionary };
+            localStorage.setItem('custom_dict', JSON.stringify(customDictionary));
+            updateDictUI();
+        }
+
+        if (parsed.anchors) {
+            fixedAnchors = parsed.anchors;
+        } else {
+            fixedAnchors = {};
+        }
+
+        classifier.clearAllClasses();
+
+        if (parsed.baseData) {
+            const ds = {};
+            Object.keys(parsed.baseData).forEach(key => { ds[key] = tf.tensor2d(parsed.baseData[key]); });
+            classifier.setClassifierDataset(ds);
+        } else if (parsed.freeData) {
+            const ds = {};
+            Object.keys(parsed.freeData).forEach(key => { ds[key] = tf.tensor2d(parsed.freeData[key]); });
+            classifier.setClassifierDataset(ds);
+        }
+
+        updateModelStatus();
+        outputText.innerText = "云端模型加载成功";
+    }
+
+    document.getElementById('sync-btn').addEventListener('click', uploadToGitHub);
+    document.getElementById('pull-btn').addEventListener('click', pullFromGitHub);
+
+    document.getElementById('clear-btn').addEventListener('click', () => {
+        if(confirm('注意：必须清空并重新录入！\n确定要清空本地模型并重新录入吗？')) {
+            classifier.clearAllClasses();
+            fixedAnchors = {};
+            actionSequence = [];
+            customDictionary = {};
+            gestureDictionary = { ...baseDictionary };
+            localStorage.removeItem('custom_dict');
+            updateDictUI();
+            updateModelStatus();
+            outputText.innerText = "系统就绪，等待输入...";
+        }
+    });
+
+    if (getGHConfig()) { pullFromGitHub(); }
+
+    // ==========================================
+    // AI 语义润色配置与逻辑 (LLM Integration)
+    // ==========================================
+    const DEFAULT_PROMPT = "你是一个专业的手语翻译助手。听障人士的词汇输入通常缺乏语法、倒装或乱序。请将我提供的词汇序列，整理成一句自然、通顺、带有感情的中文日常口语。直接输出整理后的话，不要包含任何多余的解释或标点。例如输入'咖啡 喝 请你'，输出'请你喝咖啡'。";
+
+    function loadLLMConfig() {
+        document.getElementById('llm-enable').checked = localStorage.getItem('llm_enable') === 'true';
+        document.getElementById('llm-url').value = localStorage.getItem('llm_url') || '';
+        document.getElementById('llm-key').value = localStorage.getItem('llm_key') || '';
+        document.getElementById('llm-model').value = localStorage.getItem('llm_model') || '';
+        document.getElementById('llm-prompt').value = localStorage.getItem('llm_prompt') || DEFAULT_PROMPT;
+
+        if (localStorage.getItem('llm_key')) {
+            document.getElementById('llm-status').innerText = '已加载本地 AI 配置';
+        }
+    }
+    loadLLMConfig();
+
+    document.getElementById('llm-save-btn').addEventListener('click', () => {
+        localStorage.setItem('llm_enable', document.getElementById('llm-enable').checked);
+        localStorage.setItem('llm_url', document.getElementById('llm-url').value.trim());
+        localStorage.setItem('llm_key', document.getElementById('llm-key').value.trim());
+        localStorage.setItem('llm_model', document.getElementById('llm-model').value.trim());
+        localStorage.setItem('llm_prompt', document.getElementById('llm-prompt').value.trim() || DEFAULT_PROMPT);
+
+        document.getElementById('llm-status').innerText = 'AI 配置已保存';
+        document.getElementById('llm-status').style.color = '#27ae60';
+    });
+
+    async function translateSequenceWithLLM(sequenceWords) {
+        const url = document.getElementById('llm-url').value.trim();
+        const key = document.getElementById('llm-key').value.trim();
+        const model = document.getElementById('llm-model').value.trim();
+        const prompt = document.getElementById('llm-prompt').value.trim();
+
+        if (!url || !key || !model) {
+            return "⚠️ AI 配置不完整，请检查右侧面板。";
+        }
+
+        const rawText = sequenceWords.join(" ");
+        const messages = [
+            { role: "system", content: prompt },
+            { role: "user", content: `请翻译这串手语词汇：${rawText}` }
+        ];
+
+        try {
+            console.log("🚀 开始呼叫大模型... 提交词汇:", rawText);
+
+            const response = await fetch(url, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${key}`
+                },
+                body: JSON.stringify({
+                    model: model,
+                    messages: messages,
+                    temperature: 0.3
+                })
+            });
+
+            if (!response.ok) {
+                const errorData = await response.json(); // 抓取具体的错误原因
+                console.error("❌ API 返回错误:", errorData);
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+
+            const data = await response.json();
+            const resultText = data.choices[0].message.content.trim();
+
+            console.log("✅ 大模型回复成功:", resultText);
+            return resultText;
+
+        } catch (error) {
+            console.error("🛑 LLM 彻底运行失败:", error);
+            return "⚠️ AI 翻译网络异常或配置错误";
+        }
+    }
+    </script>
+</body>
+</html>
